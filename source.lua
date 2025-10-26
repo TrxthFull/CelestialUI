@@ -1,6 +1,6 @@
 --[[
     CelestialUI Library
-    Basic Window System (Red → Black gradient + Toggle Close Button)
+    Basic Window System (Red → Black gradient + Toggle Close Button + Dragging)
     Author: TrxthFull
 ]]
 
@@ -8,9 +8,10 @@ local function CreateCelestialUI()
     -- Create ScreenGui
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "CelestialUI_Root"
+    ScreenGui.ResetOnSpawn = false
     ScreenGui.Parent = game:GetService("CoreGui")
 
-    -- Create main window frame
+    -- Main window frame
     local MainFrame = Instance.new("Frame")
     MainFrame.Name = "CelestialWindow"
     MainFrame.Size = UDim2.new(0, 400, 0, 300)
@@ -19,12 +20,12 @@ local function CreateCelestialUI()
     MainFrame.BorderSizePixel = 0
     MainFrame.Parent = ScreenGui
 
-    -- Add rounded corners
+    -- Rounded corners
     local Corner = Instance.new("UICorner")
     Corner.CornerRadius = UDim.new(0, 12)
     Corner.Parent = MainFrame
 
-    -- Add gradient background (red top-left → black bottom-right)
+    -- Gradient (red top-left → black bottom-right)
     local Gradient = Instance.new("UIGradient")
     Gradient.Color = ColorSequence.new{
         ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
@@ -33,7 +34,7 @@ local function CreateCelestialUI()
     Gradient.Rotation = 45
     Gradient.Parent = MainFrame
 
-    -- Add title label
+    -- Title label
     local Title = Instance.new("TextLabel")
     Title.Text = "CelestialUI"
     Title.Size = UDim2.new(1, -30, 0, 30)
@@ -45,7 +46,7 @@ local function CreateCelestialUI()
     Title.Position = UDim2.new(0, 10, 0, 0)
     Title.Parent = MainFrame
 
-    -- Add close ("X") button
+    -- Close button
     local CloseButton = Instance.new("TextButton")
     CloseButton.Text = "×"
     CloseButton.Size = UDim2.new(0, 30, 0, 30)
@@ -56,12 +57,41 @@ local function CreateCelestialUI()
     CloseButton.TextSize = 20
     CloseButton.Parent = MainFrame
 
-    -- Toggle UI visibility on click
+    -- Toggle visibility
     CloseButton.MouseButton1Click:Connect(function()
         MainFrame.Visible = not MainFrame.Visible
     end)
 
-    -- Return the main frame for expansion (tabs, sections, etc.)
+    -- Dragging logic
+    local UIS = game:GetService("UserInputService")
+    local dragging = false
+    local dragStart, startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+
+    Title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            update(input)
+        end
+    end)
+
+    -- Return main frame
     return MainFrame
 end
 
