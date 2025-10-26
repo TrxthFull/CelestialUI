@@ -340,7 +340,9 @@ function CelestialUI:CreateWindow(title, opts)
 		tabs[#tabs+1] = {btn = btn, page = page, name = name}
 		-- auto open first tab
 		if #tabs == 1 then
-			page.Visible = true
+  		  page.Visible = true
+    		btn.BackgroundColor3 = DEFAULT_THEME.Button
+  		  activePage = page
 		end
 
 		return tab
