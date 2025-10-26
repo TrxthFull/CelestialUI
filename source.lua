@@ -91,11 +91,9 @@ local function CreateCelestialUI()
         end
     end)
 
-    -- Return main frame
-    return MainFrame
-end
-
-    -- CreateTab function
+    --------------------------------------------------------------------
+    -- CreateTab function (INSIDE the main function so MainFrame exists)
+    --------------------------------------------------------------------
     function MainFrame:CreateTab(tabName)
         local TabButton = Instance.new("TextButton")
         TabButton.Name = tabName .. "_Button"
@@ -131,9 +129,13 @@ end
             TabPage.Visible = true
         end)
 
-        -- Return the tab page
         return TabPage
     end
 
+    --------------------------------------------------------------------
+    -- Return the main window (the full UI object)
+    --------------------------------------------------------------------
+    return MainFrame
+end
 
 return CreateCelestialUI
