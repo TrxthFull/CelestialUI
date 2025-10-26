@@ -340,7 +340,8 @@ function CelestialUI:CreateWindow(title, opts)
 		tabs[#tabs+1] = {btn = btn, page = page, name = name}
 		-- auto open first tab
 		if #tabs == 1 then
-			btn:MouseButton1Click()
+			btn.MouseButton1Click:Connect(function() end) -- dummy safeguard
+			btn:Activate() -- simulate click
 		end
 
 		return tab
