@@ -95,4 +95,45 @@ local function CreateCelestialUI()
     return MainFrame
 end
 
+    -- CreateTab function
+    function MainFrame:CreateTab(tabName)
+        local TabButton = Instance.new("TextButton")
+        TabButton.Name = tabName .. "_Button"
+        TabButton.Text = tabName
+        TabButton.Size = UDim2.new(0, 100, 0, 30)
+        TabButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        TabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        TabButton.Font = Enum.Font.Gotham
+        TabButton.TextSize = 14
+        TabButton.Parent = MainFrame
+
+        -- Rounded corners for tab button
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 6)
+        Corner.Parent = TabButton
+
+        -- Create tab page
+        local TabPage = Instance.new("Frame")
+        TabPage.Name = tabName .. "_Page"
+        TabPage.Size = UDim2.new(1, -10, 1, -40)
+        TabPage.Position = UDim2.new(0, 5, 0, 35)
+        TabPage.BackgroundTransparency = 1
+        TabPage.Visible = true
+        TabPage.Parent = MainFrame
+
+        -- TabButton toggles visibility of its page
+        TabButton.MouseButton1Click:Connect(function()
+            for _, child in ipairs(MainFrame:GetChildren()) do
+                if child:IsA("Frame") and child.Name:find("_Page") then
+                    child.Visible = false
+                end
+            end
+            TabPage.Visible = true
+        end)
+
+        -- Return the tab page
+        return TabPage
+    end
+
+
 return CreateCelestialUI
