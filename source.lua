@@ -1,6 +1,5 @@
--- CelestialUILib.lua
--- Original UI library: tabs, sections, buttons, toggles, sliders, dropdowns, notifications, themes, draggable window, orb background.
--- Designed for client-side execution in Roblox. Place in your GitHub as "source.lua" (or whatever) and load via HttpGet + loadstring.
+-- CelestialUILib.lua (fixed & hardened)
+-- Client-side UI library for Roblox (tabs, sections, buttons, toggles, sliders, dropdowns, notifications, theme, draggable window, orb background).
 
 local CelestialUI = {}
 CelestialUI.__index = CelestialUI
@@ -15,10 +14,10 @@ local DEFAULT_TOGGLE_KEY = Enum.KeyCode.RightBracket
 local NOTIF_DURATION = 3
 
 -- Services (client-side)
+local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RS = game:GetService("RunService")
 local TS = game:GetService("TweenService")
-local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 
 -- Helper to create instances
@@ -28,10 +27,10 @@ local function new(name, class)
 	return obj
 end
 
--- Clean up previous UI
+-- Clean up previous UI (safe)
 do
-	local existing = CoreGui:FindFirstChild("CelestialUI_Root")
-	if existing then
+	local ok, existing = pcall(function() return CoreGui:FindFirstChild("CelestialUI_Root") end)
+	if ok and existing then
 		pcall(function() existing:Destroy() end)
 	end
 end
@@ -40,10 +39,16 @@ end
 local RootGui = Instance.new("ScreenGui")
 RootGui.Name = "CelestialUI_Root"
 RootGui.ResetOnSpawn = false
--- Try to parent into CoreGui safely
-local ok, err = pcall(function() RootGui.Parent = CoreGui end)
-if not ok then
-	RootGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+-- Try to parent into CoreGui safely, else PlayerGui
+local parentOk = pcall(function() RootGui.Parent = CoreGui end)
+if not parentOk or not RootGui.Parent then
+	local plr = Players.LocalPlayer
+	if plr then
+		RootGui.Parent = plr:WaitForChild("PlayerGui")
+	else
+		-- fallback – try CoreGui again
+		RootGui.Parent = CoreGui
+	end
 end
 
 -- default palette (exposed on returned API)
@@ -58,17 +63,27 @@ local DEFAULT_THEME = {
 	NotifBg = Color3.fromRGB(20,20,20)
 }
 
+-- notification stacking container
+local notifContainer = new("NotifContainer", "Frame")
+notifContainer.Size = UDim2.new(0, 340, 0, 0)
+notifContainer.AnchorPoint = Vector2.new(1, 0)
+notifContainer.Position = UDim2.new(1, -10, 0, 10)
+notifContainer.BackgroundTransparency = 1
+notifContainer.Parent = RootGui
+notifContainer.ZIndex = 9999
+local notifStack = {} -- track stacked frames
+
 -- Notification helper
 local function notify(text, dur)
 	dur = dur or NOTIF_DURATION
 	local frame = new("CelNotif", "Frame")
 	frame.Size = UDim2.new(0, 320, 0, 40)
 	frame.AnchorPoint = Vector2.new(1,0)
-	frame.Position = UDim2.new(1, -10, 0, 10)
+	frame.Position = UDim2.new(1, 0, 0, (#notifStack) * 48)
 	frame.BackgroundTransparency = 0
 	frame.BackgroundColor3 = DEFAULT_THEME.NotifBg
 	frame.ZIndex = 9999
-	frame.Parent = RootGui
+	frame.Parent = notifContainer
 
 	local corner = new("c", "UICorner"); corner.Parent = frame; corner.CornerRadius = UDim.new(0,8)
 	local lbl = new("txt", "TextLabel"); lbl.Parent = frame
@@ -76,14 +91,31 @@ local function notify(text, dur)
 	lbl.BackgroundTransparency = 1; lbl.TextXAlignment = Enum.TextXAlignment.Left
 	lbl.Font = Enum.Font.Gotham; lbl.TextSize = 14; lbl.Text = text; lbl.TextColor3 = DEFAULT_THEME.Text
 
-	frame.Position = UDim2.new(1, 340, 0, 10)
-	TS:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = UDim2.new(1, -10, 0, 10)}):Play()
+	table.insert(notifStack, frame)
+
+	-- slide in
+	frame.Position = UDim2.new(1, 340, 0, frame.Position.Y.Offset)
+	TS:Create(frame, TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = UDim2.new(1, 0, 0, frame.Position.Y.Offset)}):Play()
+
 	task.delay(dur, function()
 		if frame and frame.Parent then
-			TS:Create(frame, TweenInfo.new(0.25), {Position = UDim2.new(1, 340, 0, 10)}):Play()
-			task.wait(0.3)
+			TS:Create(frame, TweenInfo.new(0.22), {Position = UDim2.new(1, 340, 0, frame.Position.Y.Offset)}):Play()
+			task.wait(0.28)
 			pcall(function() frame:Destroy() end)
 		end
+		-- rebuild stack positions
+		for i, f in ipairs(notifStack) do
+			if f and f.Parent then
+				local targetY = (i-1) * 48
+				TS:Create(f, TweenInfo.new(0.18), {Position = UDim2.new(1, 0, 0, targetY)}):Play()
+			else
+				notifStack[i] = nil
+			end
+		end
+		-- compact notifStack table
+		local compact = {}
+		for _,f in ipairs(notifStack) do if f and f.Parent then table.insert(compact, f) end end
+		notifStack = compact
 	end)
 end
 
@@ -156,12 +188,14 @@ function CelestialUI:CreateWindow(title, opts)
 	local GradientFrame = new("OrbContainer","Frame"); GradientFrame.Parent = Window
 	GradientFrame.Size = UDim2.new(1,0,1,0); GradientFrame.Position = UDim2.new(0,0,0,0); GradientFrame.BackgroundTransparency = 1; GradientFrame.ZIndex = 1
 
-	-- create orbs and inner map to avoid storing on Instance to prevent "invalid member" issues
+	-- create orbs and inner map
 	local orbs = {}
 	local orb_inners = {}
 	for i=1, ORB_COUNT do
 		local orb = new("Orb"..i, "ImageLabel")
-		orb.Size = UDim2.new(0, math.random(ORB_MIN_SIZE, ORB_MAX_SIZE), 0, math.random(ORB_MIN_SIZE, ORB_MAX_SIZE))
+		local w = math.random(ORB_MIN_SIZE, ORB_MAX_SIZE)
+		local h = math.random(ORB_MIN_SIZE, ORB_MAX_SIZE)
+		orb.Size = UDim2.new(0, w, 0, h)
 		orb.Position = UDim2.new(math.random(), 0, math.random(), 0)
 		orb.BackgroundTransparency = 1
 		orb.Image = "" -- not using image
@@ -208,12 +242,18 @@ function CelestialUI:CreateWindow(title, opts)
 		page.Parent = PageArea
 		page.Visible = false
 
+		-- use UIListLayout to stack sections automatically
+		local listLayout = Instance.new("UIListLayout")
+		listLayout.Parent = page
+		listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		listLayout.Padding = UDim.new(0, 8)
+
 		-- section factory on tab
 		function tab:CreateSection(title)
 			local section = {}
 			local secFrame = new(title.."Sec", "Frame")
 			secFrame.Size = UDim2.new(1, -20, 0, 120)
-			secFrame.Position = UDim2.new(0, 10, 0, (#page:GetChildren() * 6))
+			secFrame.LayoutOrder = (#page:GetChildren() + 1)
 			secFrame.BackgroundColor3 = DEFAULT_THEME.Element
 			secFrame.BackgroundTransparency = 0.06
 			secFrame.Parent = page
@@ -224,28 +264,39 @@ function CelestialUI:CreateWindow(title, opts)
 			secTitle.BackgroundTransparency = 1; secTitle.Font = Enum.Font.GothamBold
 			secTitle.TextSize = 14; secTitle.Text = title; secTitle.TextColor3 = DEFAULT_THEME.Text
 
-			local y = 36
+			-- We'll stack inside the section using a UIListLayout as well
+			local innerList = Instance.new("UIListLayout")
+			innerList.Parent = secFrame
+			innerList.Padding = UDim.new(0, 8)
+			innerList.SortOrder = Enum.SortOrder.LayoutOrder
+
+			local function addLayoutElement(element)
+				-- set LayoutOrder to push elements down; re-parent will be done by section functions
+				element.LayoutOrder = (#secFrame:GetChildren() + 1)
+				return element
+			end
 
 			function section:AddButton(text, callback)
 				local b = new(text.."Btn","TextButton"); b.Parent = secFrame
-				b.Size = UDim2.new(1, -24, 0, 30); b.Position = UDim2.new(0, 12, 0, y)
+				b.Size = UDim2.new(1, -24, 0, 30); b.Position = UDim2.new(0, 12, 0, 36) -- position won't matter due to list; kept for safety
 				b.BackgroundColor3 = DEFAULT_THEME.Button; b.Font = Enum.Font.Gotham; b.Text = text; b.TextSize = 13; b.TextColor3 = DEFAULT_THEME.Text
 				new("cb","UICorner").Parent = b
 				b.MouseButton1Click:Connect(function()
 					pcall(function() if callback then callback() end end)
 				end)
-				y = y + 36
+				addLayoutElement(b)
 				return b
 			end
 
 			function section:AddToggle(text, default, callback)
-				local lbl = new("lbl","TextLabel"); lbl.Parent = secFrame
-				lbl.Size = UDim2.new(0.7, 0, 0, 24); lbl.Position = UDim2.new(0,12, 0, y); lbl.BackgroundTransparency = 1
+				local root = new("toggleRow", "Frame"); root.Size = UDim2.new(1, -24, 0, 24); root.BackgroundTransparency = 1; root.Parent = secFrame
+				local lbl = new("lbl","TextLabel"); lbl.Parent = root
+				lbl.Size = UDim2.new(0.7, 0, 1, 0); lbl.Position = UDim2.new(0,0,0,0); lbl.BackgroundTransparency = 1
 				lbl.Text = text; lbl.Font = Enum.Font.Gotham; lbl.TextColor3 = DEFAULT_THEME.Text; lbl.TextSize = 13
-
-				local toggle = new("tog","TextButton"); toggle.Parent = secFrame
-				toggle.Size = UDim2.new(0,44,0,24); toggle.Position = UDim2.new(1,-64,0,y)
-				toggle.BackgroundColor3 = default and DEFAULT_THEME.Accent or Color3.fromRGB(60,60,60); toggle.Text = ""; new("rt","UICorner").Parent = toggle
+				local toggle = new("tog","TextButton"); toggle.Parent = root
+				toggle.Size = UDim2.new(0,44,0,24); toggle.Position = UDim2.new(1,-44,0,0)
+				toggle.BackgroundColor3 = default and DEFAULT_THEME.Accent or Color3.fromRGB(60,60,60); toggle.Text = ""
+				new("rt","UICorner").Parent = toggle
 
 				local state = default and true or false
 				toggle.MouseButton1Click:Connect(function()
@@ -253,18 +304,19 @@ function CelestialUI:CreateWindow(title, opts)
 					toggle.BackgroundColor3 = state and DEFAULT_THEME.Accent or Color3.fromRGB(60,60,60)
 					pcall(callback, state)
 				end)
-				y = y + 36
+				addLayoutElement(root)
 				return toggle
 			end
 
 			function section:AddSlider(text, min, max, default, callback)
 				min = min or 0; max = max or 100; default = default or min
-				local lbl = new("slabel","TextLabel"); lbl.Parent = secFrame
-				lbl.Size = UDim2.new(0.5,0,0,20); lbl.Position = UDim2.new(0,12,0,y); lbl.BackgroundTransparency = 1
+				local root = new("sliderRow","Frame"); root.Size = UDim2.new(1, -24, 0, 48); root.BackgroundTransparency = 1; root.Parent = secFrame
+				local lbl = new("slabel","TextLabel"); lbl.Parent = root
+				lbl.Size = UDim2.new(0.5,0,0,20); lbl.Position = UDim2.new(0,0,0,0); lbl.BackgroundTransparency = 1
 				lbl.Text = text .. ": " .. tostring(default); lbl.Font = Enum.Font.Gotham; lbl.TextSize = 13; lbl.TextColor3 = DEFAULT_THEME.Text
 
-				local barBack = new("barb","Frame"); barBack.Parent = secFrame
-				barBack.Size = UDim2.new(1, -40, 0, 12); barBack.Position = UDim2.new(0,12,0,y+22); barBack.BackgroundColor3 = Color3.fromRGB(40,40,40); new("barc","UICorner").Parent = barBack
+				local barBack = new("barb","Frame"); barBack.Parent = root
+				barBack.Size = UDim2.new(1, 0, 0, 12); barBack.Position = UDim2.new(0,0,0,24); barBack.BackgroundColor3 = Color3.fromRGB(40,40,40); new("barc","UICorner").Parent = barBack
 				local fill = new("fill","Frame"); fill.Parent = barBack; fill.Size = UDim2.new((default - min) / math.max(1, (max - min)), 0, 1, 0); fill.BackgroundColor3 = DEFAULT_THEME.Accent; new("fc","UICorner").Parent = fill
 
 				local dragging = false
@@ -282,25 +334,28 @@ function CelestialUI:CreateWindow(title, opts)
 						local t = math.clamp((mx - x0) / math.max(1,w), 0, 1)
 						fill.Size = UDim2.new(t, 0, 1, 0)
 						local value = min + (max - min) * t
-						lbl.Text = text .. ": " .. math.floor(value)
+						lbl.Text = string.format("%s: %d", text, math.floor(value))
 						pcall(callback, value)
 					end
 				end)
-				y = y + 56
+				addLayoutElement(root)
 				return {bar = barBack, fill = fill}
 			end
 
 			function section:AddDropdown(text, choices, callback)
-				local lbl = new("dlabel","TextLabel"); lbl.Parent = secFrame
-				lbl.Size = UDim2.new(0.6,0,0,20); lbl.Position = UDim2.new(0,12,0,y); lbl.BackgroundTransparency = 1
+				local root = new("dropRow","Frame"); root.Size = UDim2.new(1, -24, 0, 36); root.BackgroundTransparency = 1; root.Parent = secFrame
+				local lbl = new("dlabel","TextLabel"); lbl.Parent = root
+				lbl.Size = UDim2.new(0.6,0,0,20); lbl.Position = UDim2.new(0,0,0,0); lbl.BackgroundTransparency = 1
 				lbl.Text = text; lbl.Font = Enum.Font.Gotham; lbl.TextSize = 13; lbl.TextColor3 = DEFAULT_THEME.Text
 
-				local dd = new("dd","TextButton"); dd.Parent = secFrame
-				dd.Size = UDim2.new(0,120,0,26); dd.Position = UDim2.new(1,-136,0,y); dd.Text = choices[1] or "Select"; dd.Font = Enum.Font.Gotham; new("ddc","UICorner").Parent = dd
+				local dd = new("dd","TextButton"); dd.Parent = root
+				dd.Size = UDim2.new(0,120,0,26); dd.Position = UDim2.new(1,-120,0,0); dd.Text = choices[1] or "Select"; dd.Font = Enum.Font.Gotham; new("ddc","UICorner").Parent = dd
 
-				local listFrame = new("list","Frame"); listFrame.Parent = secFrame
-				listFrame.Size = UDim2.new(0,120,0,#choices * 28); listFrame.Position = UDim2.new(1,-136,0,y+30); listFrame.BackgroundColor3 = Color3.fromRGB(25,25,25); new("lfc","UICorner").Parent = listFrame
+				local listFrame = new("list","ScrollingFrame"); listFrame.Parent = root
+				listFrame.Size = UDim2.new(0,120,0, math.clamp(#choices * 28, 0, 200)); listFrame.Position = UDim2.new(1,-120,0,26); listFrame.BackgroundColor3 = Color3.fromRGB(25,25,25); new("lfc","UICorner").Parent = listFrame
 				listFrame.Visible = false
+				listFrame.CanvasSize = UDim2.new(0,0,0,#choices * 28)
+				listFrame.ScrollBarThickness = 4
 
 				for i,choice in ipairs(choices) do
 					local it = new("it"..i, "TextButton"); it.Parent = listFrame
@@ -317,7 +372,7 @@ function CelestialUI:CreateWindow(title, opts)
 					listFrame.Visible = not listFrame.Visible
 				end)
 
-				y = y + 36
+				addLayoutElement(root)
 				return dd
 			end
 
@@ -325,24 +380,36 @@ function CelestialUI:CreateWindow(title, opts)
 		end
 
 		-- clicking tab button switches pages
-		btn.MouseButton1Click:Connect(function()
+		local function switchToPage()
 			for _,t in ipairs(tabs) do
-				if t.page then t.page.Visible = false end
+				if t and t.page and t.page.Parent then
+					t.page.Visible = false
+				end
 			end
-			page.Visible = true
-			activePage = page
-			for _,t in ipairs(tabs) do if t.btn then t.btn.BackgroundColor3 = DEFAULT_THEME.Element end
+			if page and page.Parent then
+				page.Visible = true
+				activePage = page
 			end
-			btn.BackgroundColor3 = DEFAULT_THEME.Button
-		end)
+			for _,t in ipairs(tabs) do
+				if t and t.btn and t.btn.Parent then
+					t.btn.BackgroundColor3 = DEFAULT_THEME.Element
+				end
+			end
+			if btn and btn.Parent then
+				btn.BackgroundColor3 = DEFAULT_THEME.Button
+			end
+		end
+
+		btn.MouseButton1Click:Connect(switchToPage)
 
 		-- register tab
 		tabs[#tabs+1] = {btn = btn, page = page, name = name}
 		-- auto open first tab
 		if #tabs == 1 then
-  		  page.Visible = true
-    		btn.BackgroundColor3 = DEFAULT_THEME.Button
-  		  activePage = page
+			-- directly set visible (no event spam)
+			page.Visible = true
+			btn.BackgroundColor3 = DEFAULT_THEME.Button
+			activePage = page
 		end
 
 		return tab
@@ -362,7 +429,10 @@ function CelestialUI:CreateWindow(title, opts)
 	self.ToggleKey = toggleKey
 	UIS.InputBegan:Connect(function(inp, gp)
 		if gp then return end
-		if inp.KeyCode == toggleKey then
+		-- guard against non-keyboard input
+		local ok, key = pcall(function() return inp.KeyCode end)
+		if not ok then return end
+		if key == toggleKey then
 			uiVisible = not uiVisible
 			Window.Visible = uiVisible
 			if uiVisible then notify("GUI shown", 1.5) end
@@ -394,20 +464,30 @@ function CelestialUI:CreateWindow(title, opts)
 		end)
 	end
 
-	-- orbit physics update
+	-- orbit physics update (safe & performant)
 	RS.RenderStepped:Connect(function(dt)
 		local mouseX, mouseY = UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y
 		for i, orb in ipairs(orbs) do
+			-- safe-guards
+			if not orb or not orb.Parent or not orbStates[i] then
+				goto continue_orb
+			end
+
 			local absPos = orb.AbsolutePosition + Vector2.new(orb.AbsoluteSize.X/2, orb.AbsoluteSize.Y/2)
 			local diff = Vector2.new(absPos.X - mouseX, absPos.Y - mouseY)
 			local dist = diff.Magnitude
 			if dist < ORB_REPEL_DISTANCE then
-				local dir = diff.Unit or Vector2.new(0,0)
+				local dir = (dist > 0) and diff.Unit or Vector2.new(0,0)
 				local force = (1 - dist/ORB_REPEL_DISTANCE) * ORB_BOUNCE_FORCE
 				orbStates[i].vel = orbStates[i].vel + dir * (force * dt)
 			end
+
 			-- attract to original pos:
 			local posUD = orbStates[i].pos
+			if not (posUD and posUD.X and posUD.Y) then
+				posUD = orb.Position
+				orbStates[i].pos = posUD
+			end
 			local target = Vector2.new(Window.AbsolutePosition.X + posUD.X.Offset + orb.AbsoluteSize.X/2, Window.AbsolutePosition.Y + posUD.Y.Offset + orb.AbsoluteSize.Y/2)
 			local cur = orb.AbsolutePosition + Vector2.new(orb.AbsoluteSize.X/2, orb.AbsoluteSize.Y/2)
 			local toTarget = (target - cur)
@@ -415,15 +495,18 @@ function CelestialUI:CreateWindow(title, opts)
 			orbStates[i].vel = orbStates[i].vel * (1 - math.clamp(6*dt, 0, 1))
 			local newPos = UDim2.new(posUD.X.Scale, posUD.X.Offset + orbStates[i].vel.X * 0.5, posUD.Y.Scale, posUD.Y.Offset + orbStates[i].vel.Y * 0.5)
 			orbStates[i].pos = newPos
-			pcall(function()
-				TS:Create(orb, TweenInfo.new(0.06, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = newPos}):Play()
-			end)
+
+			-- apply position directly (cheap)
+			pcall(function() orb.Position = newPos end)
+
 			local inner = orb_inners[orb]
 			if inner then
 				pcall(function()
-					inner.BackgroundColor3 = DEFAULT_THEME.TopLeft:Lerp(DEFAULT_THEME.BottomRight or DEFAULT_THEME.BottomRight, i / #orbs)
+					inner.BackgroundColor3 = DEFAULT_THEME.TopLeft:Lerp(DEFAULT_THEME.BottomRight or DEFAULT_THEME.TopLeft, i / #orbs)
 				end)
 			end
+
+			::continue_orb::
 		end
 	end)
 
@@ -431,6 +514,7 @@ function CelestialUI:CreateWindow(title, opts)
 	function self:Notify(txt, dur) notify(txt, dur) end
 
 	function self:Destroy()
+		-- disconnecting RenderStepped not required (anonymous connection), just destroy GUI safely
 		if RootGui and RootGui.Parent then
 			pcall(function() RootGui:Destroy() end)
 		end
@@ -448,9 +532,8 @@ function CelestialUI:CreateWindow(title, opts)
 end
 
 -- Make the module callable: UI("Name")
-return setmetatable({}, {
+return setmetatable(CelestialUI, {
 	__call = function(_, ...)
-		local ctor = CelestialUI
-		return ctor:CreateWindow(...)
+		return CelestialUI:CreateWindow(...)
 	end
 })
